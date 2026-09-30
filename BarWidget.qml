@@ -46,7 +46,7 @@ BarWidget {
 
   readonly property string status: Model.statusOf(state, enabled)
 
-  readonly property string glyphText: "󰅶"
+  readonly property string glyphText: "󰔟"
   readonly property color baseForeground: bar ? bar.barForeground : Color.foreground
   readonly property color glyphColor: root.status === "due" ? (bar ? bar.urgent : Color.urgent) : root.baseForeground
 

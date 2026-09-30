@@ -170,7 +170,7 @@ Item {
             Text {
               anchors.horizontalCenter: parent.horizontalCenter
               textFormat: Text.PlainText
-              text: "󰅶"
+              text: "󰔟"
               color: Color.accent
               font.family: root.fontFamily
               font.pixelSize: Style.fontPx(3)

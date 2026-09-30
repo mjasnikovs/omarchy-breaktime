@@ -33,7 +33,7 @@ The icon lands on the right of the bar. Move it with `omarchy bar move`.
 
 | Action | How |
 |---|---|
-| Open settings | Click the coffee cup in the bar |
+| Open settings | Click the hourglass in the bar |
 | Turn on or off | Toggle in the panel, or Space while it is open |
 | Change interval | Drag the slider, or Left / Right while the panel is open |
 | Reset the timer | "Reset timer" in the panel |
