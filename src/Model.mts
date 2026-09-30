@@ -4,9 +4,10 @@
 // here. Every function returns a fresh object. Nothing is mutated.
 //
 // One state object lives in one file on disk. Every bar instance and the
-// popup read it and derive everything else from it. The bar widget that
-// owns the schedule ("the writer") is the only thing that starts, ends, or
-// restarts a break. The popup writes exactly one thing: a snooze.
+// popup read it and derive everything else from it. The scheduler (fire,
+// finish, restart on the clock) runs on one bar instance, "the writer".
+// User actions (reset, on/off, interval, break now, snooze) may be written
+// by any instance or by the popup; each write is the whole state.
 
 export const MS_PER_MINUTE = 60000
 
@@ -88,7 +89,7 @@ export function parseState(text: unknown, now: number, intervalMs: number): Brea
     return normalizeState(safeJsonParse(text), now, intervalMs)
 }
 
-export function normalizeState(raw: unknown, now: number, intervalMs: number): BreakState {
+function normalizeState(raw: unknown, now: number, intervalMs: number): BreakState {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return start(now, intervalMs)
     const record = raw as Record<string, unknown>
 
@@ -177,12 +178,13 @@ export function remainingMs(state: BreakState, now: number): number {
     return Math.max(0, state.deadline - now)
 }
 
-export function breakElapsedMs(breakStartedAt: number, now: number): number {
+function breakElapsedMs(breakStartedAt: number, now: number): number {
     if (breakStartedAt <= 0) return 0
     return Math.max(0, now - breakStartedAt)
 }
 
 export function breakRemainingMs(breakStartedAt: number, now: number): number {
+    if (breakStartedAt <= 0) return 0
     return Math.max(0, BREAK_MS - breakElapsedMs(breakStartedAt, now))
 }
 
@@ -202,9 +204,8 @@ export function statusOf(state: BreakState, enabled: boolean): Status {
     return 'running'
 }
 
-export function formatMinutes(ms: number): string {
+function formatMinutes(ms: number): string {
     const minutes = Math.ceil(ms / MS_PER_MINUTE)
-    if (minutes <= 0) return 'now'
     if (minutes === 1) return '1 min'
     return `${minutes} min`
 }
@@ -222,7 +223,9 @@ export function statusText(state: BreakState, enabled: boolean, now: number): st
     if (status === 'off') return 'Off'
     if (status === 'due') return `On a break, ${formatClock(breakRemainingMs(state.breakStartedAt, now))} left`
     if (status === 'away') return 'Away from the desk'
-    return `Next break in ${formatMinutes(remainingMs(state, now))}`
+    const left = remainingMs(state, now)
+    if (left <= 0) return 'Break due now'
+    return `Next break in ${formatMinutes(left)}`
 }
 
 export function tooltipFor(state: BreakState, enabled: boolean, interval: number, now: number): string {

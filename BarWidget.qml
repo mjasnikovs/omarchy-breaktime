@@ -10,9 +10,10 @@ import "Model.mjs" as Model
 //
 // The bar mounts one of these per monitor. All of them read the same state
 // file. Only the first one in the bar's slot order ("the writer") runs the
-// scheduler: it fires, finishes, and restarts breaks. Any instance may write
-// a user action (reset, snooze, on/off, interval); every write is the whole
-// state, so the last one wins and nothing is merged.
+// scheduler: it fires, finishes, and restarts breaks on the clock, and it
+// alone reacts to the on/off setting. Any instance may write a user action
+// (reset, snooze, break now, interval); every write is the whole state, so
+// the last one wins and nothing is merged.
 BarWidget {
   id: root
   moduleName: "mjasnikovs.breaktime"
@@ -79,16 +80,23 @@ BarWidget {
       return
     }
 
+    var action = Model.tick(root.state, root.now)
+
+    // A break that ran out is finished whether or not the plugin is on, so
+    // a card never sits at 0:00 after shell.json was edited by hand.
+    if (action === "finish") {
+      root.commit(Model.finishBreak(root.state, root.now, root.intervalMs))
+      return
+    }
     if (!root.enabled) return
 
     if (root.raiseOnFirstTick) {
       root.raiseOnFirstTick = false
       if (Model.isDue(root.state)) root.requestPopup()
+      return
     }
 
-    var action = Model.tick(root.state, root.now)
-    if (action === "finish") root.commit(Model.finishBreak(root.state, root.now, root.intervalMs))
-    else if (action === "restart") root.commit(Model.start(root.now, root.intervalMs))
+    if (action === "restart") root.commit(Model.start(root.now, root.intervalMs))
     else if (action === "fire") root.requestPopup()
   }
 
@@ -100,10 +108,16 @@ BarWidget {
     if (!lockProbe.running) lockProbe.running = true
   }
 
+  // The probe took time. Check again that a card is still wanted: the state
+  // may have moved on (snooze, reset, break finished, plugin turned off).
   function applyLockProbe(raw) {
     if (String(raw || "").trim() === "true") return
-    if (!root.enabled) return
-    root.showPopup()
+    if (!root.enabled || !root.amWriter()) return
+    var now = Date.now()
+    var wanted = Model.isDue(root.state)
+      ? !Model.isBreakOver(root.state, now)
+      : Model.tick(root.state, now) === "fire"
+    if (wanted) root.showPopup()
   }
 
   function popupOpen() {
@@ -126,14 +140,20 @@ BarWidget {
 
     var raised = host.summon(root.moduleName, JSON.stringify({ breakStartedAt: next.breakStartedAt })) === true
 
-    // Overlay failed to load (happens during a hot-reload). No break was
-    // offered, so start over rather than sit on "due".
+    // The shell refused (plugin disabled or unknown at that moment). No
+    // break was offered, so start over rather than sit on "due".
     if (!raised) root.commit(Model.start(Date.now(), root.intervalMs))
   }
 
   // ---- Actions. Any instance may run them.
   function restart() { root.commit(Model.start(Date.now(), root.intervalMs)) }
-  function snoozeNow() { root.commit(Model.snooze(root.state, Date.now())) }
+
+  // Snooze means "not this break". Outside a break it would only pull the
+  // next reminder closer, so it does nothing.
+  function snoozeNow() {
+    if (!Model.isDue(root.state)) return
+    root.commit(Model.snooze(root.state, Date.now()))
+  }
 
   // The user asked for it, so nobody is behind a lock screen.
   function breakNow() {
@@ -151,21 +171,27 @@ BarWidget {
       root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
-  // Either way the timer starts over. Turning off during a break takes the
-  // popup down: it watches the file and closes when the break is gone.
+  // Only the setting is written here. The writer reacts to the change in
+  // onEnabledChanged below, whether it came from this panel, another
+  // screen's panel, or a hand edit of shell.json.
   function setEnabled(value) {
     var next = value === true
     if (next === root.enabled) return
     root.persistSettings({ enabled: next })
-    root.restart()
   }
 
+  // During a break only the setting changes; finishBreak picks up the new
+  // interval. Otherwise the timer starts over at the new length.
   function setInterval(minutes) {
     var next = Model.intervalMinutes(minutes)
     if (next === root.intervalMinutes) return
     root.persistSettings({ intervalMinutes: next })
-    root.commit(Model.start(Date.now(), next * Model.MS_PER_MINUTE))
+    if (!Model.isDue(root.state)) root.commit(Model.start(Date.now(), next * Model.MS_PER_MINUTE))
   }
+
+  // Either way the timer starts over. Turning off during a break takes the
+  // popup down: it watches the file and closes when the break is gone.
+  onEnabledChanged: if (root.stateLoaded && root.amWriter()) root.restart()
 
   function statusJson() {
     var at = Date.now()
@@ -236,6 +262,7 @@ BarWidget {
     onLoaded: {
       var first = !root.stateLoaded
       root.stateLoaded = true
+      root.stateSeedNeeded = false
       root.adopt(stateFile.text())
       if (first && Model.isDue(root.state)) root.raiseOnFirstTick = true
     }

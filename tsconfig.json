@@ -3,7 +3,7 @@
         /* Language and Environment */
         // ES2017: the QML JavaScript engine (QV4) does not lower newer syntax.
         "target": "ES2017",
-        "lib": ["es2022"],
+        "lib": ["es2017"],
         "moduleDetection": "force",
 
         /* Modules */

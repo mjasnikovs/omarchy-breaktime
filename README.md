@@ -48,7 +48,8 @@ what you are typing.
 - When the 5-minute bar is full, the card closes and the next interval starts.
 - Turning the plugin off or on starts the timer over. Off also closes an
   open card.
-- The card waits while the screen is locked and shows once you unlock.
+- The card waits while the screen is locked. Unlock within 5 minutes and it
+  shows. A longer lock counts as time away, and a fresh interval starts.
 - After suspend, a reminder that is more than 5 minutes overdue is dropped
   and a fresh interval starts.
 - Snooze as many times as you like.
@@ -115,12 +116,12 @@ bun install
 bun run lint        # prettier, eslint --fix, tsc
 bun test            # bun test on src/Model.mts
 bun run build       # emits Model.mjs, which the QML imports
-bun run prepublish  # check + build + validate the clean tree
+bun run release     # check + build + validate what is committed
 ```
 
 `src/Model.mts` holds all the scheduling logic and has no Qt dependency. The
 built `Model.mjs` is committed because `omarchy plugin add` clones the raw
-repo with no build step. Run `bun run prepublish` before every push.
+repo with no build step. Commit, then run `bun run release` before every push.
 
 ## License
 

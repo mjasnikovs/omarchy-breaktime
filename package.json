@@ -11,7 +11,7 @@
         "lint": "prettier --log-level warn --write 'src/**/*.mts' 'test/**/*.ts' && eslint --fix src test && tsc --noEmit",
         "test": "bun test",
         "check": "prettier --check 'src/**/*.mts' 'test/**/*.ts' && eslint src test && tsc --noEmit && bun test",
-        "prepublish": "bun run check && bun run build && bash scripts/prepublish.sh"
+        "release": "bun run check && bun run build && bash scripts/release-check.sh"
     },
     "devDependencies": {
         "@eslint/js": "10.0.1",

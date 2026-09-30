@@ -56,8 +56,9 @@ Item {
 
     var startedAt = Number(payload.breakStartedAt)
     root.now = Date.now()
-    // Summoned by hand from a terminal: show a break starting now.
-    root.breakStartedAt = isFinite(startedAt) && startedAt > 0 ? startedAt : root.now
+    // No payload (summoned by hand): 0 means "take whatever break the file
+    // holds", and syncWithFile fills it in or closes the card.
+    root.breakStartedAt = isFinite(startedAt) && startedAt > 0 ? startedAt : 0
     root.opened = true
     stateFile.reload()
   }
@@ -68,12 +69,15 @@ Item {
     if (root.opened) root.snooze()
   }
 
+  // Writes only if the file still holds this card's break. If the writer
+  // ended it a moment ago, there is nothing to snooze.
   function snooze() {
     if (!root.opened) return
     root.opened = false
     var at = Date.now()
     var current = Model.parseState(stateFile.text(), at, Model.DEFAULT_INTERVAL_MINUTES * Model.MS_PER_MINUTE)
-    stateFile.setText(Model.serializeState(Model.snooze(current, at)))
+    if (current.breakStartedAt === root.breakStartedAt)
+      stateFile.setText(Model.serializeState(Model.snooze(current, at)))
     root.dismiss()
   }
 
@@ -87,6 +91,10 @@ Item {
   function syncWithFile() {
     if (!root.opened) return
     var current = Model.parseState(stateFile.text(), Date.now(), Model.DEFAULT_INTERVAL_MINUTES * Model.MS_PER_MINUTE)
+    if (root.breakStartedAt === 0 && current.breakStartedAt > 0) {
+      root.breakStartedAt = current.breakStartedAt
+      return
+    }
     if (current.breakStartedAt !== root.breakStartedAt) root.dismiss()
   }
 

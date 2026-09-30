@@ -105,6 +105,7 @@ describe('break progress', () => {
     test('remaining counts down to zero', () => {
         expect(M.breakRemainingMs(DUE, DUE)).toBe(M.BREAK_MS)
         expect(M.breakRemainingMs(DUE, DUE + M.BREAK_MS + 1000)).toBe(0)
+        expect(M.breakRemainingMs(0, DUE)).toBe(0)
     })
 
     test('no progress when not on a break', () => {
@@ -149,7 +150,7 @@ describe('readers', () => {
         expect(M.statusOf(M.goIdle(s, T0), true)).toBe('away')
         expect(M.statusText(s, true, T0 + 12 * MIN)).toBe('Next break in 18 min')
         expect(M.statusText(s, true, DUE - 1000)).toBe('Next break in 1 min')
-        expect(M.statusText(s, true, DUE)).toBe('Next break in now')
+        expect(M.statusText(s, true, DUE)).toBe('Break due now')
         expect(M.statusText(M.fire(s, DUE), true, DUE + 28 * 1000)).toBe('On a break, 4:32 left')
         expect(M.statusText(s, false, T0)).toBe('Off')
     })
