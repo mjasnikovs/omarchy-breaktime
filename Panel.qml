@@ -6,8 +6,8 @@ import "Model.mjs" as Model
 // Settings for Break Time: an on/off switch, an interval slider, and a
 // line saying when the next break is due.
 //
-// This panel owns no state. BarWidget.qml holds the schedule and does every
-// write; everything here reads off `hostWidget` and calls back into it.
+// This panel owns no state. It reads off `hostWidget` (the BarWidget on this
+// screen) and calls its actions; the widget does the writes.
 Panel {
   id: root
   moduleName: "mjasnikovs.breaktime"
@@ -15,15 +15,16 @@ Panel {
   manageIpc: false
 
   property var anchorItem: null
+
+  // The bar identifies this panel by the widget mounted in its slot, not by
+  // this nested item. Bare (no host) only during the bar's own instantiation.
   property var hostWidget: null
   readonly property var barIdentity: hostWidget || root
-  readonly property var host: hostWidget
 
-  readonly property real now: host ? host.now : Date.now()
-  readonly property var state: host ? host.state : Model.defaultState(Date.now(), 30 * Model.MS_PER_MINUTE)
-  readonly property bool enabled: host ? host.enabled : true
-  readonly property int intervalMinutes: host ? host.intervalMinutes : 30
-  readonly property string statusLine: Model.statusText(state, enabled, now)
+  readonly property bool enabled: hostWidget ? hostWidget.enabled : true
+  readonly property int intervalMinutes: hostWidget ? hostWidget.intervalMinutes : Model.DEFAULT_INTERVAL_MINUTES
+  readonly property string statusLine: hostWidget
+    ? Model.statusText(hostWidget.state, hostWidget.enabled, hostWidget.now) : ""
 
   readonly property color contentForeground: Color.popups.text
   readonly property string contentFontFamily: Style.font.family
@@ -56,13 +57,9 @@ Panel {
       root.bar.centerHoverRevealSuppressed = value
   }
 
-  function act(name, arg) {
-    if (!root.host || typeof root.host[name] !== "function") return
-    if (arg === undefined) root.host[name]()
-    else root.host[name](arg)
-  }
-
-  function stepInterval(delta) { root.act("setInterval", root.intervalMinutes + delta) }
+  function flipEnabled() { if (root.hostWidget) root.hostWidget.setEnabled(!root.enabled) }
+  function setInterval(minutes) { if (root.hostWidget) root.hostWidget.setInterval(minutes) }
+  function stepInterval(delta) { root.setInterval(root.intervalMinutes + delta) }
 
   KeyboardPanel {
     id: panel
@@ -80,7 +77,7 @@ Panel {
       anchors.fill: parent
 
       onCloseRequested: root.close()
-      onActivateRequested: root.act("setEnabled", !root.enabled)
+      onActivateRequested: root.flipEnabled()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onMoveRequested: function(dx, dy) {
         if (dx !== 0) root.stepInterval(dx * 5)
@@ -115,7 +112,7 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             checked: root.enabled
             foreground: root.contentForeground
-            onToggled: root.act("setEnabled", !root.enabled)
+            onToggled: root.flipEnabled()
           }
         }
 
@@ -171,7 +168,7 @@ Panel {
           step: 5
           integer: true
           value: root.intervalMinutes
-          onReleased: function(v) { root.act("setInterval", v) }
+          onReleased: function(v) { root.setInterval(v) }
         }
 
         PanelSeparator {
@@ -189,7 +186,7 @@ Panel {
             bordered: true
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
-            onClicked: root.act("restart")
+            onClicked: if (root.hostWidget) root.hostWidget.restart()
           }
 
           Button {
@@ -197,7 +194,7 @@ Panel {
             bordered: true
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
-            onClicked: { root.close(); root.act("breakNow") }
+            onClicked: { root.close(); if (root.hostWidget) root.hostWidget.breakNow() }
           }
         }
 

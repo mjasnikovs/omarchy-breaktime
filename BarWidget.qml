@@ -9,45 +9,46 @@ import "Model.mjs" as Model
 // The bar face of Break Time. One glyph. Click opens the settings panel.
 //
 // The bar mounts one of these per monitor. All of them read the same state
-// file. Only the first one in the bar's slot order ("the writer") advances the
-// schedule and raises the popup, so two monitors never raise two popups.
+// file. Only the first one in the bar's slot order ("the writer") runs the
+// scheduler: it fires, finishes, and restarts breaks. Any instance may write
+// a user action (reset, snooze, on/off, interval); every write is the whole
+// state, so the last one wins and nothing is merged.
 BarWidget {
   id: root
   moduleName: "mjasnikovs.breaktime"
 
   readonly property bool enabled: Model.boolSetting(setting("enabled", true), true)
-  readonly property int intervalMinutes: Model.intervalMinutes(setting("intervalMinutes", 30))
+  readonly property int intervalMinutes: Model.intervalMinutes(setting("intervalMinutes", Model.DEFAULT_INTERVAL_MINUTES))
   readonly property real intervalMs: intervalMinutes * Model.MS_PER_MINUTE
 
   readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy/breaktime"
   readonly property string statePath: stateDir + "/state.json"
 
-  property var state: Model.defaultState(Date.now(), intervalMs)
+  // A copy of the file. commit() sets it ahead of the write so this screen
+  // redraws at once; the file watch replaces it with what actually landed.
+  property var state: Model.start(Date.now(), intervalMs)
+
+  // Display clock. Refreshed every tick and on every write, so a panel on
+  // this screen never shows a value derived from a second-old clock.
   property real now: Date.now()
+
   property bool stateLoaded: false
   property bool stateSeedNeeded: false
 
-  // Only probed while a reminder is overdue, and not more than once per
-  // LOCK_PROBE_MS, so nothing runs on the timer during normal operation.
+  // Set on the first load when the file already says a break is on: the
+  // shell restarted under an open popup. The first tick raises it again.
+  property bool raiseOnFirstTick: false
+
+  // The lock probe runs only when a reminder comes due, and no more than
+  // once per lockProbeMs while the screen stays locked.
   readonly property int lockProbeMs: 15000
   property real lastLockProbeAt: 0
-  property bool locked: false
 
-  // "Due but no card on screen" must hold for this long before the card is
-  // raised again. The popup's own Done/Snooze write lands within
-  // milliseconds; a shell restart leaves the gap open for good.
-  readonly property int reraiseAfterMs: 3000
-  property real dueClosedSince: 0
-
-  readonly property string status: Model.statusOf(state, enabled, now)
-  readonly property real remainingMs: Model.remainingMs(state, now)
+  readonly property string status: Model.statusOf(state, enabled)
 
   readonly property string glyphText: "󰅶"
   readonly property color baseForeground: bar ? bar.barForeground : Color.foreground
-  readonly property color glyphColor: {
-    if (root.status === "due") return bar ? bar.urgent : Color.urgent
-    return root.baseForeground
-  }
+  readonly property color glyphColor: root.status === "due" ? (bar ? bar.urgent : Color.urgent) : root.baseForeground
 
   // ---- Writer election.
   function amWriter() {
@@ -56,8 +57,6 @@ BarWidget {
     return peers.length === 0 || peers[0] === root
   }
 
-  // Any instance may write. The clock is refreshed first so a panel on this
-  // screen shows the new state without waiting for the next tick.
   function commit(next) {
     if (!next) return
     root.now = Date.now()
@@ -82,36 +81,29 @@ BarWidget {
 
     if (!root.enabled) return
 
-    // Due but no card on screen: the shell restarted under an open popup.
-    // Raise it again once that has been true for a moment.
-    if (root.state.due && !root.popupOpen()) {
-      root.settleOverdueBreak()
-      if (root.dueClosedSince === 0) root.dueClosedSince = root.now
-      else if (root.now - root.dueClosedSince >= root.reraiseAfterMs) root.requestPopup()
-      return
+    if (root.raiseOnFirstTick) {
+      root.raiseOnFirstTick = false
+      if (Model.isDue(root.state)) root.requestPopup()
     }
-    root.dueClosedSince = 0
 
     var action = Model.tick(root.state, root.now)
-    if (action === "restart") root.commit(Model.start(root.now, root.intervalMs))
+    if (action === "finish") root.commit(Model.finishBreak(root.state, root.now, root.intervalMs))
+    else if (action === "restart") root.commit(Model.start(root.now, root.intervalMs))
     else if (action === "fire") root.requestPopup()
   }
 
-  // The popup ends the break itself. This is the fallback for a popup that
-  // never reported back (shell killed mid-break).
-  function settleOverdueBreak() {
-    if (!root.amWriter() || !root.enabled) return
-    if (!Model.isBreakOver(root.state, root.now + Model.MS_PER_MINUTE)) return
-    root.commit(Model.finishBreak(root.now, root.intervalMs))
-  }
-
-  // Never raise the popup over the lock screen. Ask the shell, but not more
-  // than once every lockProbeMs.
+  // Never raise the popup over the lock screen. Ask the shell first.
   function requestPopup() {
     var at = Date.now()
     if (at - root.lastLockProbeAt < root.lockProbeMs) return
     root.lastLockProbeAt = at
     if (!lockProbe.running) lockProbe.running = true
+  }
+
+  function applyLockProbe(raw) {
+    if (String(raw || "").trim() === "true") return
+    if (!root.enabled) return
+    root.showPopup()
   }
 
   function popupOpen() {
@@ -120,46 +112,35 @@ BarWidget {
     return host.isPluginOpen(root.moduleName) === true
   }
 
-  function applyLockProbe(raw) {
-    root.locked = String(raw || "").trim() === "true"
-    if (root.locked) return
-    if (!root.amWriter() || !root.enabled) return
-    var stillDue = root.state.due && !root.popupOpen()
-    if (!stillDue && Model.tick(root.state, Date.now()) !== "fire") return
-    root.showPopup()
-  }
-
+  // Write "break on" first, then summon. The write blocks, so the popup's
+  // first read of the file already agrees with the payload it was handed.
   function showPopup() {
     var host = root.bar && root.bar.shell ? root.bar.shell : null
-    if (!host || typeof host.summon !== "function") {
-      root.commit(Model.start(Date.now(), root.intervalMs))
-      return
-    }
+    if (!host || typeof host.summon !== "function") return
+    if (root.popupOpen()) return
 
-    // A break already running (shell restarted under the popup) keeps its
-    // start time so the progress bar carries on where it was.
-    if (!root.state.due) root.commit(Model.fire(root.state, Date.now()))
+    // A break already on (shell restarted under the popup) keeps its start
+    // time so the progress bar carries on where it was.
+    var next = Model.isDue(root.state) ? root.state : Model.fire(root.state, Date.now())
+    root.commit(next)
+
     var raised = host.summon(root.moduleName, JSON.stringify({
       statePath: root.statePath,
-      intervalMs: root.intervalMs
+      breakStartedAt: next.breakStartedAt
     })) === true
 
-    // Overlay failed to load (happens during a hot-reload). Start over rather
-    // than sit on "due" forever.
+    // Overlay failed to load (happens during a hot-reload). No break was
+    // offered, so start over rather than sit on "due".
     if (!raised) root.commit(Model.start(Date.now(), root.intervalMs))
   }
 
-  // ---- Actions. Shared by the panel and the IPC target. Any instance may
-  //      run them; they all end in one write every instance reads back.
+  // ---- Actions. Any instance may run them.
   function restart() { root.commit(Model.start(Date.now(), root.intervalMs)) }
   function snoozeNow() { root.commit(Model.snooze(root.state, Date.now())) }
 
-  // The user asked for it, so nobody is behind a lock screen. Straight to
-  // the popup, no probe, from whichever screen was clicked.
+  // The user asked for it, so nobody is behind a lock screen.
   function breakNow() {
     if (!root.enabled) return
-    if (root.state.due && root.popupOpen()) return
-    root.lastLockProbeAt = Date.now()
     root.showPopup()
   }
 
@@ -173,8 +154,8 @@ BarWidget {
       root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
-  // Either way the timer starts over. Turning off while the popup is up
-  // takes the popup down: it watches the file and closes when "due" clears.
+  // Either way the timer starts over. Turning off during a break takes the
+  // popup down: it watches the file and closes when the break is gone.
   function setEnabled(value) {
     var next = value === true
     if (next === root.enabled) return
@@ -192,13 +173,12 @@ BarWidget {
   function statusJson() {
     var at = Date.now()
     return JSON.stringify({
-      status: Model.statusOf(root.state, root.enabled, at),
+      status: Model.statusOf(root.state, root.enabled),
       enabled: root.enabled,
       intervalMinutes: root.intervalMinutes,
       remainingSeconds: Math.ceil(Model.remainingMs(root.state, at) / 1000),
-      breakRemainingSeconds: Math.ceil(Model.breakRemainingMs(root.state, at) / 1000),
-      snoozes: root.state.snoozes,
-      locked: root.locked
+      breakRemainingSeconds: Math.ceil(Model.breakRemainingMs(root.state.breakStartedAt, at) / 1000),
+      snoozes: root.state.snoozes
     })
   }
 
@@ -254,15 +234,18 @@ BarWidget {
     path: root.statePath
     watchChanges: true
     atomicWrites: true
+    blockWrites: true
     printErrors: false
     onLoaded: {
+      var first = !root.stateLoaded
       root.stateLoaded = true
       root.adopt(stateFile.text())
+      if (first && Model.isDue(root.state)) root.raiseOnFirstTick = true
     }
     onFileChanged: stateFile.reload()
     onLoadFailed: {
       if (root.stateLoaded) return
-      root.state = Model.defaultState(Date.now(), root.intervalMs)
+      root.state = Model.start(Date.now(), root.intervalMs)
       root.stateSeedNeeded = true
     }
   }
@@ -277,9 +260,8 @@ BarWidget {
     onIsIdleChanged: {
       if (!root.amWriter() || !root.enabled) return
       var at = Date.now()
-      root.now = at
       if (idleMonitor.isIdle) root.commit(Model.goIdle(root.state, at))
-      else root.commit(Model.endIdle(root.state, at, root.intervalMs))
+      else root.commit(Model.endIdle(at, root.intervalMs))
     }
   }
 

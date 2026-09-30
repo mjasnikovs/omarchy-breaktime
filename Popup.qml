@@ -7,14 +7,13 @@ import qs.Ui
 import "Model.mjs" as Model
 
 // The break card. One small centered window per monitor. Work stays visible
-// around it. A progress bar fills over the 5-minute break; when it is full
-// the card closes and the next interval starts. Snooze pushes the reminder
-// 5 minutes out instead.
+// around it. A progress bar fills over the 5-minute break. The bar widget
+// ends the break when the time is up; this card only shows it, and closes
+// when the file no longer holds the break it was opened for.
 //
-// The bar widget summons this with the state file path and the interval.
-// The card writes the outcome to that file itself; the bar widget picks it
-// up through its file watch. If the file stops saying "due" (the user walked
-// away and came back, or turned the plugin off), the card closes on its own.
+// The one thing the card writes is a snooze. Everything else that changes
+// the file (break over, user came back, plugin turned off) happens in the
+// bar widget, and the card follows through its file watch.
 Item {
   id: root
 
@@ -23,18 +22,15 @@ Item {
   property var manifest: null
 
   property bool opened: false
-  // A file change arriving this soon after open is the bar widget's own
-  // "fire" write landing, not the user coming back from a break.
-  readonly property int settleMs: 1500
-  property real openedAt: 0
   property string statePath: Quickshell.env("HOME") + "/.local/state/omarchy/breaktime/state.json"
-  property real intervalMs: Model.DEFAULT_INTERVAL_MINUTES * Model.MS_PER_MINUTE
 
-  property var state: Model.defaultState(Date.now(), intervalMs)
+  // Which break this card belongs to. When the file's breakStartedAt is
+  // anything else, this card is stale and closes.
+  property real breakStartedAt: 0
   property real now: Date.now()
 
-  readonly property real progress: Model.breakProgress(state, now)
-  readonly property string clockText: Model.formatClock(Model.breakRemainingMs(state, now))
+  readonly property real progress: Model.breakProgress(breakStartedAt, now)
+  readonly property string clockText: Model.formatClock(Model.breakRemainingMs(breakStartedAt, now))
 
   readonly property string fontFamily: Style.font.family
   readonly property color foreground: Color.popups.text
@@ -57,35 +53,27 @@ Item {
     }
 
     if (payload.statePath) root.statePath = String(payload.statePath)
-    var interval = Number(payload.intervalMs)
-    if (isFinite(interval) && interval > 0) root.intervalMs = interval
-
-    root.openedAt = Date.now()
-    root.now = root.openedAt
+    var startedAt = Number(payload.breakStartedAt)
+    root.now = Date.now()
+    // Summoned by hand from a terminal: show a break starting now.
+    root.breakStartedAt = isFinite(startedAt) && startedAt > 0 ? startedAt : root.now
     root.opened = true
     stateFile.reload()
   }
 
-  // Called by the shell on hide. A close from outside (hotkey, shell
-  // restart) counts as a snooze so the reminder comes back.
+  // Called by the shell when something else hides this plugin (for example
+  // `omarchy-shell shell hide`). Treat it as "not now".
   function close() {
-    if (root.opened) root.finish("snooze")
+    if (root.opened) root.snooze()
   }
 
-  function snooze() { root.finish("snooze") }
-
-  function finish(outcome) {
+  function snooze() {
     if (!root.opened) return
     root.opened = false
-    root.writeOutcome(outcome)
-    root.dismiss()
-  }
-
-  function writeOutcome(outcome) {
     var at = Date.now()
-    var current = Model.parseState(stateFile.text(), at, root.intervalMs)
-    var next = outcome === "finished" ? Model.finishBreak(at, root.intervalMs) : Model.snooze(current, at)
-    stateFile.setText(Model.serializeState(next))
+    var current = Model.parseState(stateFile.text(), at, Model.DEFAULT_INTERVAL_MINUTES * Model.MS_PER_MINUTE)
+    stateFile.setText(Model.serializeState(Model.snooze(current, at)))
+    root.dismiss()
   }
 
   function dismiss() {
@@ -94,22 +82,11 @@ Item {
       root.shell.hide((root.manifest && root.manifest.id) || "mjasnikovs.breaktime")
   }
 
-  // The bar widget changed the file behind our back: the user came back
-  // after a real break, or switched the plugin off. Nothing left to show.
+  // The file is the truth. If it no longer holds this break, close.
   function syncWithFile() {
     if (!root.opened) return
-    var current = Model.parseState(stateFile.text(), Date.now(), root.intervalMs)
-    if (current.due) {
-      root.state = current
-      return
-    }
-    if (Date.now() - root.openedAt < root.settleMs) return
-    root.dismiss()
-  }
-
-  function pulse() {
-    root.now = Date.now()
-    if (Model.isBreakOver(root.state, root.now)) root.finish("finished")
+    var current = Model.parseState(stateFile.text(), Date.now(), Model.DEFAULT_INTERVAL_MINUTES * Model.MS_PER_MINUTE)
+    if (current.breakStartedAt !== root.breakStartedAt) root.dismiss()
   }
 
   function handleKey(event) {
@@ -124,19 +101,10 @@ Item {
     path: root.statePath
     watchChanges: true
     atomicWrites: true
+    blockWrites: true
     printErrors: false
     onFileChanged: stateFile.reload()
     onLoaded: root.syncWithFile()
-  }
-
-  // A change that arrived during the settle window was ignored. Look once
-  // more after it, so an "off" click right after the card appears still
-  // closes it.
-  Timer {
-    interval: root.settleMs + 200
-    repeat: false
-    running: root.opened
-    onTriggered: stateFile.reload()
   }
 
   // 250 ms so the bar moves smoothly rather than in one-second steps.
@@ -144,7 +112,7 @@ Item {
     interval: 250
     repeat: true
     running: root.opened
-    onTriggered: root.pulse()
+    onTriggered: root.now = Date.now()
   }
 
   Variants {
