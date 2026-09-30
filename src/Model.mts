@@ -12,6 +12,10 @@ export const MIN_INTERVAL_MINUTES = 15
 export const MAX_INTERVAL_MINUTES = 120
 export const DEFAULT_INTERVAL_MINUTES = 30
 
+/** How long the break itself lasts. The popup shows this as a progress bar. */
+export const BREAK_MS = 5 * MS_PER_MINUTE
+
+/** "Snooze" pushes the reminder this far out. */
 export const SNOOZE_MS = 5 * MS_PER_MINUTE
 
 // No input for this long means the user left the desk. Coming back after
@@ -27,8 +31,10 @@ export interface BreakState {
     deadline: number
     /** Epoch ms the user went away, or 0 while active. */
     idleSince: number
-    /** True while the popup is up and unanswered. */
+    /** True while the popup is up. */
     due: boolean
+    /** Epoch ms the current break began, or 0. */
+    breakStartedAt: number
     /** How many times the current reminder was snoozed. */
     snoozes: number
 }
@@ -66,7 +72,7 @@ function sanitizeTime(value: unknown, fallback: number): number {
 }
 
 export function start(now: number, intervalMs: number): BreakState {
-    return {deadline: now + intervalMs, idleSince: 0, due: false, snoozes: 0}
+    return {deadline: now + intervalMs, idleSince: 0, due: false, breakStartedAt: 0, snoozes: 0}
 }
 
 export function defaultState(now: number, intervalMs: number): BreakState {
@@ -97,13 +103,18 @@ export function normalizeState(raw: unknown, now: number, intervalMs: number): B
     let idleSince = sanitizeTime(record.idleSince, 0)
     if (idleSince > now + MS_PER_MINUTE) idleSince = 0
 
+    const due = record.due === true
+    let breakStartedAt = due ? sanitizeTime(record.breakStartedAt, now) : 0
+    if (breakStartedAt > now + MS_PER_MINUTE) breakStartedAt = now
+
     let snoozes = Number(record.snoozes)
     if (!isFinite(snoozes) || snoozes < 0) snoozes = 0
 
     return {
         deadline,
         idleSince,
-        due: record.due === true,
+        due,
+        breakStartedAt,
         snoozes: Math.floor(snoozes)
     }
 }
@@ -113,24 +124,31 @@ export function serializeState(state: BreakState): string {
         deadline: state.deadline,
         idleSince: state.idleSince,
         due: state.due,
+        breakStartedAt: state.breakStartedAt,
         snoozes: state.snoozes
     })
 }
 
 // ------------------------------------------------------------- transitions
 
-/** The popup went up. */
-export function fire(state: BreakState): BreakState {
-    return {...state, due: true}
+/** The popup went up. The break clock starts now. */
+export function fire(state: BreakState, now: number): BreakState {
+    return {...state, due: true, breakStartedAt: now}
 }
 
+/** "Not now." The reminder comes back in SNOOZE_MS. */
 export function snooze(state: BreakState, now: number): BreakState {
-    return {deadline: now + SNOOZE_MS, idleSince: 0, due: false, snoozes: state.snoozes + 1}
+    return {deadline: now + SNOOZE_MS, idleSince: 0, due: false, breakStartedAt: 0, snoozes: state.snoozes + 1}
 }
 
-/** "Done" on the popup, or a manual reset. Same thing: a fresh interval. */
-export function done(now: number, intervalMs: number): BreakState {
+/** The break ran its course. A fresh interval begins. */
+export function finishBreak(now: number, intervalMs: number): BreakState {
     return start(now, intervalMs)
+}
+
+/** Take the popup down without judging the break (the plugin was turned off). */
+export function cancelBreak(state: BreakState): BreakState {
+    return {...state, due: false, breakStartedAt: 0}
 }
 
 export function goIdle(state: BreakState, now: number): BreakState {
@@ -166,6 +184,24 @@ export function remainingMs(state: BreakState, now: number): number {
     return Math.max(0, state.deadline - now)
 }
 
+export function breakElapsedMs(state: BreakState, now: number): number {
+    if (!state.due || state.breakStartedAt <= 0) return 0
+    return Math.max(0, now - state.breakStartedAt)
+}
+
+export function breakRemainingMs(state: BreakState, now: number): number {
+    return Math.max(0, BREAK_MS - breakElapsedMs(state, now))
+}
+
+/** 0 at the start of the break, 1 when it is over. */
+export function breakProgress(state: BreakState, now: number): number {
+    return Math.min(1, breakElapsedMs(state, now) / BREAK_MS)
+}
+
+export function isBreakOver(state: BreakState, now: number): boolean {
+    return state.due && breakElapsedMs(state, now) >= BREAK_MS
+}
+
 export function statusOf(state: BreakState, enabled: boolean): Status {
     if (!enabled) return 'off'
     if (state.due) return 'due'
@@ -180,10 +216,18 @@ export function formatMinutes(ms: number): string {
     return `${minutes} min`
 }
 
+/** "4:32" */
+export function formatClock(ms: number): string {
+    const totalSeconds = Math.max(0, Math.ceil(ms / 1000))
+    const minutes = Math.floor(totalSeconds / 60)
+    const seconds = totalSeconds % 60
+    return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`
+}
+
 export function statusText(state: BreakState, enabled: boolean, now: number): string {
     const status = statusOf(state, enabled)
     if (status === 'off') return 'Off'
-    if (status === 'due') return 'Break is due'
+    if (status === 'due') return `On a break, ${formatClock(breakRemainingMs(state, now))} left`
     if (status === 'away') return 'Away from the desk'
     return `Next break in ${formatMinutes(remainingMs(state, now))}`
 }

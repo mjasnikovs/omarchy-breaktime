@@ -6,14 +6,15 @@ import qs.Commons
 import qs.Ui
 import "Model.mjs" as Model
 
-// The reminder card. One small centered window per monitor. Work stays
-// visible around it. Snooze pushes the reminder 5 minutes out. Done starts
-// a fresh interval.
+// The break card. One small centered window per monitor. Work stays visible
+// around it. A progress bar fills over the 5-minute break; when it is full
+// the card closes and the next interval starts. Snooze pushes the reminder
+// 5 minutes out instead.
 //
 // The bar widget summons this with the state file path and the interval.
 // The card writes the outcome to that file itself; the bar widget picks it
 // up through its file watch. If the file stops saying "due" (the user walked
-// away and came back), the card closes on its own.
+// away and came back, or turned the plugin off), the card closes on its own.
 Item {
   id: root
 
@@ -24,15 +25,22 @@ Item {
   property bool opened: false
   // A file change arriving this soon after open is the bar widget's own
   // "fire" write landing, not the user coming back from a break.
-  readonly property int settleMs: 2000
+  readonly property int settleMs: 1500
   property real openedAt: 0
   property string statePath: Quickshell.env("HOME") + "/.local/state/omarchy/breaktime/state.json"
   property real intervalMs: Model.DEFAULT_INTERVAL_MINUTES * Model.MS_PER_MINUTE
+
+  property var state: Model.defaultState(Date.now(), intervalMs)
+  property real now: Date.now()
+
+  readonly property real progress: Model.breakProgress(state, now)
+  readonly property string clockText: Model.formatClock(Model.breakRemainingMs(state, now))
 
   readonly property string fontFamily: Style.font.family
   readonly property color foreground: Color.popups.text
   readonly property color background: Color.popups.background
   readonly property color dim: Qt.darker(foreground, 1.5)
+  readonly property color trackColor: Style.selectedFillFor(foreground, Color.accent)
   readonly property var borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
 
   readonly property string titleText: "Time for a break"
@@ -53,6 +61,7 @@ Item {
     if (isFinite(interval) && interval > 0) root.intervalMs = interval
 
     root.openedAt = Date.now()
+    root.now = root.openedAt
     root.opened = true
     stateFile.reload()
   }
@@ -64,7 +73,6 @@ Item {
   }
 
   function snooze() { root.finish("snooze") }
-  function done() { root.finish("done") }
 
   function finish(outcome) {
     if (!root.opened) return
@@ -76,7 +84,7 @@ Item {
   function writeOutcome(outcome) {
     var at = Date.now()
     var current = Model.parseState(stateFile.text(), at, root.intervalMs)
-    var next = outcome === "done" ? Model.done(at, root.intervalMs) : Model.snooze(current, at)
+    var next = outcome === "finished" ? Model.finishBreak(at, root.intervalMs) : Model.snooze(current, at)
     stateFile.setText(Model.serializeState(next))
   }
 
@@ -86,21 +94,27 @@ Item {
       root.shell.hide((root.manifest && root.manifest.id) || "mjasnikovs.breaktime")
   }
 
-  // The bar widget cleared "due" behind our back (user came back after a
-  // real break). Nothing left to ask.
+  // The bar widget changed the file behind our back: the user came back
+  // after a real break, or switched the plugin off. Nothing left to show.
   function syncWithFile() {
     if (!root.opened) return
-    if (Date.now() - root.openedAt < root.settleMs) return
     var current = Model.parseState(stateFile.text(), Date.now(), root.intervalMs)
-    if (!current.due) root.dismiss()
+    if (current.due) {
+      root.state = current
+      return
+    }
+    if (Date.now() - root.openedAt < root.settleMs) return
+    root.dismiss()
+  }
+
+  function pulse() {
+    root.now = Date.now()
+    if (Model.isBreakOver(root.state, root.now)) root.finish("finished")
   }
 
   function handleKey(event) {
     if (event.key === Qt.Key_Escape) {
       root.snooze()
-      event.accepted = true
-    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-      root.done()
       event.accepted = true
     }
   }
@@ -113,6 +127,14 @@ Item {
     printErrors: false
     onFileChanged: stateFile.reload()
     onLoaded: root.syncWithFile()
+  }
+
+  // 250 ms so the bar moves smoothly rather than in one-second steps.
+  Timer {
+    interval: 250
+    repeat: true
+    running: root.opened
+    onTriggered: root.pulse()
   }
 
   Variants {
@@ -196,34 +218,56 @@ Item {
               font.pixelSize: Style.font.body
             }
 
-            Item { width: 1; height: Style.space(4) }
+            // ---- The break itself: a bar that fills over five minutes.
+            Item {
+              width: Style.space(320)
+              height: meter.height + clock.implicitHeight + Style.space(6)
 
-            Row {
+              Rectangle {
+                id: meter
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: Math.max(6, Style.space(8))
+                radius: height / 2
+                color: root.trackColor
+
+                Rectangle {
+                  anchors.left: parent.left
+                  anchors.top: parent.top
+                  anchors.bottom: parent.bottom
+                  width: parent.width * root.progress
+                  radius: parent.radius
+                  color: Color.accent
+                }
+              }
+
+              Text {
+                id: clock
+                anchors.top: meter.bottom
+                anchors.topMargin: Style.space(6)
+                anchors.horizontalCenter: parent.horizontalCenter
+                textFormat: Text.PlainText
+                text: root.clockText + " left"
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+
+            Button {
               anchors.horizontalCenter: parent.horizontalCenter
-              spacing: Style.space(10)
-
-              Button {
-                text: "Snooze 5 min"
-                bordered: true
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                onClicked: root.snooze()
-              }
-
-              Button {
-                text: "Done"
-                bordered: true
-                selected: true
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                onClicked: root.done()
-              }
+              text: "Snooze 5 min"
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.snooze()
             }
 
             Text {
               anchors.horizontalCenter: parent.horizontalCenter
               textFormat: Text.PlainText
-              text: "esc snooze   enter done"
+              text: "esc snooze"
               color: Qt.darker(root.foreground, 2.0)
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption

@@ -197,7 +197,7 @@ Panel {
             bordered: true
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
-            onClicked: { root.act("breakNow"); root.close() }
+            onClicked: { root.close(); root.act("breakNow") }
           }
         }
 

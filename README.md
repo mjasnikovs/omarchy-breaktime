@@ -7,7 +7,8 @@ After 30 minutes at the keyboard a small card pops up:
 > **Time for a break**
 > Drink water, stretch your legs, don't look at screens!
 
-Snooze it for 5 minutes, or press Done to start the next 30 minutes.
+A bar fills over the next 5 minutes. When it is full the card closes and the
+next 30 minutes start. Not a good moment? Snooze it for 5 minutes.
 
 ![Break Time popup](preview.png)
 
@@ -40,7 +41,6 @@ The icon lands on the right of the bar. Move it with `omarchy bar move`.
 | Reset the timer | "Reset timer" in the panel |
 | Test the popup | "Break now" in the panel, or middle-click the icon |
 | Snooze 5 minutes | "Snooze 5 min" on the card, or Esc |
-| Done | "Done" on the card, or Enter |
 
 Keys on the card work after you click it. The card never steals focus from
 what you are typing.
@@ -48,7 +48,7 @@ what you are typing.
 ### Scripting
 
 ```bash
-omarchy-shell mjasnikovs.breaktime status      # JSON: status, remaining seconds, snoozes
+omarchy-shell mjasnikovs.breaktime status      # JSON: status, remaining seconds, break seconds left
 omarchy-shell mjasnikovs.breaktime breakNow
 omarchy-shell mjasnikovs.breaktime snooze
 omarchy-shell mjasnikovs.breaktime reset
@@ -63,6 +63,8 @@ omarchy-shell mjasnikovs.breaktime interval 45
 - After suspend, a reminder that is more than 5 minutes overdue is dropped
   and a fresh interval starts.
 - Snooze as many times as you like.
+- Turning the plugin off or on starts the timer over. Off also closes an
+  open break card.
 - The timer survives a shell restart. If the card was up, it comes back.
 - A playing video does not pause the timer. Watching is screen time too.
 

@@ -56,8 +56,11 @@ BarWidget {
     return peers.length === 0 || peers[0] === root
   }
 
+  // Any instance may write. The clock is refreshed first so a panel on this
+  // screen shows the new state without waiting for the next tick.
   function commit(next) {
     if (!next) return
+    root.now = Date.now()
     root.state = next
     stateFile.setText(Model.serializeState(next))
   }
@@ -82,6 +85,7 @@ BarWidget {
     // Due but no card on screen: the shell restarted under an open popup.
     // Raise it again once that has been true for a moment.
     if (root.state.due && !root.popupOpen()) {
+      root.settleOverdueBreak()
       if (root.dueClosedSince === 0) root.dueClosedSince = root.now
       else if (root.now - root.dueClosedSince >= root.reraiseAfterMs) root.requestPopup()
       return
@@ -91,6 +95,14 @@ BarWidget {
     var action = Model.tick(root.state, root.now)
     if (action === "restart") root.commit(Model.start(root.now, root.intervalMs))
     else if (action === "fire") root.requestPopup()
+  }
+
+  // The popup ends the break itself. This is the fallback for a popup that
+  // never reported back (shell killed mid-break).
+  function settleOverdueBreak() {
+    if (!root.amWriter() || !root.enabled) return
+    if (!Model.isBreakOver(root.state, root.now + Model.MS_PER_MINUTE)) return
+    root.commit(Model.finishBreak(root.now, root.intervalMs))
   }
 
   // Never raise the popup over the lock screen. Ask the shell, but not more
@@ -124,7 +136,9 @@ BarWidget {
       return
     }
 
-    root.commit(Model.fire(root.state))
+    // A break already running (shell restarted under the popup) keeps its
+    // start time so the progress bar carries on where it was.
+    if (!root.state.due) root.commit(Model.fire(root.state, Date.now()))
     var raised = host.summon(root.moduleName, JSON.stringify({
       statePath: root.statePath,
       intervalMs: root.intervalMs
@@ -135,15 +149,18 @@ BarWidget {
     if (!raised) root.commit(Model.start(Date.now(), root.intervalMs))
   }
 
-  // ---- Actions. Shared by the panel and the IPC target.
+  // ---- Actions. Shared by the panel and the IPC target. Any instance may
+  //      run them; they all end in one write every instance reads back.
   function restart() { root.commit(Model.start(Date.now(), root.intervalMs)) }
   function snoozeNow() { root.commit(Model.snooze(root.state, Date.now())) }
 
+  // The user asked for it, so nobody is behind a lock screen. Straight to
+  // the popup, no probe, from whichever screen was clicked.
   function breakNow() {
-    root.now = Date.now()
-    root.lastLockProbeAt = 0
-    root.commit({ deadline: root.now, idleSince: 0, due: false, snoozes: root.state.snoozes })
-    root.requestPopup()
+    if (!root.enabled) return
+    if (root.state.due && root.popupOpen()) return
+    root.lastLockProbeAt = Date.now()
+    root.showPopup()
   }
 
   function persistSettings(values) {
@@ -156,20 +173,20 @@ BarWidget {
       root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
+  // Either way the timer starts over. Turning off while the popup is up
+  // takes the popup down: it watches the file and closes when "due" clears.
   function setEnabled(value) {
     var next = value === true
     if (next === root.enabled) return
     root.persistSettings({ enabled: next })
-    // Turning it on starts a fresh interval. Turning it off leaves the
-    // stale deadline in place; it is ignored while off.
-    if (next && root.amWriter()) root.restart()
+    root.restart()
   }
 
   function setInterval(minutes) {
     var next = Model.intervalMinutes(minutes)
     if (next === root.intervalMinutes) return
     root.persistSettings({ intervalMinutes: next })
-    if (root.amWriter()) root.commit(Model.start(Date.now(), next * Model.MS_PER_MINUTE))
+    root.commit(Model.start(Date.now(), next * Model.MS_PER_MINUTE))
   }
 
   function statusJson() {
@@ -179,6 +196,7 @@ BarWidget {
       enabled: root.enabled,
       intervalMinutes: root.intervalMinutes,
       remainingSeconds: Math.ceil(Model.remainingMs(root.state, at) / 1000),
+      breakRemainingSeconds: Math.ceil(Model.breakRemainingMs(root.state, at) / 1000),
       snoozes: root.state.snoozes,
       locked: root.locked
     })
