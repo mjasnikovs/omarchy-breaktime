@@ -1,7 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
-import "Model.js" as Model
+import "Model.mjs" as Model
 
 // Settings for Break Time: an on/off switch, an interval slider, and a
 // line saying when the next break is due.

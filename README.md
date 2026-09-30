@@ -97,12 +97,21 @@ the timer state.
 
 ## Development
 
+Clone the repo somewhere outside `~/.config/omarchy/plugins` (the shell
+refuses folders with symlinks, and `node_modules` has some). Needs
+[bun](https://bun.sh).
+
 ```bash
-node test/model-test.js
-omarchy plugin validate .
+bun install
+bun run lint        # prettier, eslint --fix, tsc
+bun test            # bun test on src/Model.mts
+bun run build       # emits Model.mjs, which the QML imports
+bun run prepublish  # check + build + validate the clean tree
 ```
 
-`Model.js` holds all the scheduling logic and has no Qt dependency.
+`src/Model.mts` holds all the scheduling logic and has no Qt dependency. The
+built `Model.mjs` is committed because `omarchy plugin add` clones the raw
+repo with no build step. Run `bun run prepublish` before every push.
 
 ## License
 

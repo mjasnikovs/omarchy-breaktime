@@ -4,7 +4,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
-import "Model.js" as Model
+import "Model.mjs" as Model
 
 // The reminder card. One small centered window per monitor. Work stays
 // visible around it. Snooze pushes the reminder 5 minutes out. Done starts

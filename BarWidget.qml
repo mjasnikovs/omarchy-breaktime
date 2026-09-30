@@ -4,7 +4,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
-import "Model.js" as Model
+import "Model.mjs" as Model
 
 // The bar face of Break Time. One glyph. Click opens the settings panel.
 //
