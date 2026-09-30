@@ -100,8 +100,9 @@ the timer state.
 ## Requirements
 
 - Omarchy 4 (Quattro) with the Quickshell-based `omarchy-shell`.
-- No other runtime dependencies. No network access. No subprocesses except
-  one `omarchy-shell lock isLocked` query when a reminder comes due.
+- No other runtime dependencies. No network access. Two subprocesses, both
+  plain argument lists: `mkdir -p` for the state folder once at startup, and
+  `omarchy-shell lock isLocked` when a reminder comes due.
 - [bun](https://bun.sh) only for development.
 
 ## Development

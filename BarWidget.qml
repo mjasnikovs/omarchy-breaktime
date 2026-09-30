@@ -124,10 +124,7 @@ BarWidget {
     var next = Model.isDue(root.state) ? root.state : Model.fire(root.state, Date.now())
     root.commit(next)
 
-    var raised = host.summon(root.moduleName, JSON.stringify({
-      statePath: root.statePath,
-      breakStartedAt: next.breakStartedAt
-    })) === true
+    var raised = host.summon(root.moduleName, JSON.stringify({ breakStartedAt: next.breakStartedAt })) === true
 
     // Overlay failed to load (happens during a hot-reload). No break was
     // offered, so start over rather than sit on "due".

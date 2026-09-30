@@ -22,7 +22,9 @@ Item {
   property var manifest: null
 
   property bool opened: false
-  property string statePath: Quickshell.env("HOME") + "/.local/state/omarchy/breaktime/state.json"
+  // Fixed on purpose. The summon payload never chooses where this card
+  // reads or writes.
+  readonly property string statePath: Quickshell.env("HOME") + "/.local/state/omarchy/breaktime/state.json"
 
   // Which break this card belongs to. When the file's breakStartedAt is
   // anything else, this card is stale and closes.
@@ -52,7 +54,6 @@ Item {
       payload = ({})
     }
 
-    if (payload.statePath) root.statePath = String(payload.statePath)
     var startedAt = Number(payload.breakStartedAt)
     root.now = Date.now()
     // Summoned by hand from a terminal: show a break starting now.
