@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "mjasnikovs.breaktime",
+  "name": "Break Time",
+  "version": "0.1.0",
+  "author": "Edgars Mjasnikovs",
+  "license": "MIT",
+  "description": "Reminds you to drink water and stretch your legs after a while at the screen. Snooze for 5 minutes.",
+  "kinds": [
+    "bar-widget",
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "overlay": "Popup.qml"
+  },
+  "barWidget": {
+    "displayName": "Break Time",
+    "description": "Break reminder with snooze",
+    "category": "Health",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "enabled": true,
+      "intervalMinutes": 30
+    },
+    "schema": [
+      {
+        "key": "enabled",
+        "type": "boolean",
+        "label": "Enabled",
+        "description": "Turn the break reminder on or off.",
+        "defaultValue": true
+      },
+      {
+        "key": "intervalMinutes",
+        "type": "number",
+        "label": "Interval",
+        "description": "Minutes of screen time between reminders.",
+        "defaultValue": 30,
+        "min": 15,
+        "max": 120
+      }
+    ]
+  }
+}
