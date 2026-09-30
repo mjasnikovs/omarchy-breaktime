@@ -129,6 +129,16 @@ Item {
     onLoaded: root.syncWithFile()
   }
 
+  // A change that arrived during the settle window was ignored. Look once
+  // more after it, so an "off" click right after the card appears still
+  // closes it.
+  Timer {
+    interval: root.settleMs + 200
+    repeat: false
+    running: root.opened
+    onTriggered: stateFile.reload()
+  }
+
   // 250 ms so the bar moves smoothly rather than in one-second steps.
   Timer {
     interval: 250
